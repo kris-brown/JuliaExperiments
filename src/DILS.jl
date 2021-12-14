@@ -8,14 +8,16 @@ Random.seed!(123) # Setting the seed
 
 # Type abbreviations/defaults
 #----------------------------
+Idx = CartesianIndex{2}
 PVV = Pair{Vector{Float64},Vector{Float64}}
 Readouts = Vector{Union{Nothing,PVV}}
-VPI = Vector{Pair{Int,Int}}
-VPI3 = Tuple{VPI,VPI,VPI}
-VPI0 = (VPI(),VPI(),VPI())
-VPI3_2 = Pair{VPI3, VPI3}
-MaybeVVPI32 = Union{Nothing,Vector{VPI3_2}}
-VPI00 = VPI0 => VPI0
+VI = Vector{Idx}
+VI3 = Tuple{VI,VI,VI}
+VI0 = (VI(),VI(),VI())
+VI3_2 = Pair{VI3, VI3}
+MaybeVVI3 = Union{Nothing,Vector{VI3}}
+MaybeVVI32 = Union{Nothing,Vector{VI3_2}}
+VI00 = VI0 => VI0
 
 # General helper functions
 #-------------------------
@@ -179,14 +181,14 @@ Return the readout computed as an intermediate step.
 """
 function update(d::DILS, ds::DILSState,
                 input::Vector{Float64}, loss::Vector{Float64};
-                freeze::MaybeVVPI32=nothing)::Readouts
+                freeze::MaybeVVI3=nothing)::Readouts
   rs = readout(d, ds)
-  println("COMPUTING UPDATE WITH (value) READOUT $(first.(rs))")
+  # println("COMPUTING UPDATE WITH (value) READOUT $(first.(rs))")
   readins = Readouts([repeat_dc(0., b.Yᵢ) => repeat_dc(0., b.Yₒ)
                       for b in d.boxes])
   readins[topsort(d.nesting)[1]] = input=>loss
   for i in topsort(d.nesting)
-    (inputᵢ, lossᵢ), freezeᵢ = readins[i], isnothing(freeze) ? VPI00 : freeze[i]
+    (inputᵢ, lossᵢ), freezeᵢ = readins[i], isnothing(freeze) ? VI0 : freeze[i]
     #println("\tupdating box $i w/ input $inputᵢ and loss $lossᵢ")
     update_box(d.boxes[i], ds[i], rs[d.nesting[i]],
                readins[d.nesting[i]], inputᵢ, lossᵢ; freeze=freezeᵢ)
@@ -197,7 +199,7 @@ end
 """Update Primitive box by applying f and df"""
 function update_box(prim::Primitive, pstate::PrimState, r1::Readouts,
                     r2::Readouts, input::Vector{Float64}, loss::Vector{Float64};
-                    freeze::VPI3_2=VPI00)::Nothing
+                    freeze::VI3=VI0)::Nothing
   nᵢnₒ = [prim.Yᵢ, prim.Yₒ]
   length.([input, loss]) == nᵢnₒ || error("Wrong # of inputs")
   pstate.readout = prim.f(input)
@@ -210,24 +212,24 @@ end
 """Update Box by modifying weights. Also compute data to be fed into children"""
 function update_box(b::Box, boxstate::BoxState, nested_outputs::Readouts,
                     nested_inputs::Readouts, input::Vector{Float64},
-                    loss::Vector{Float64};  freeze::VPI3_2=VPI00)::Nothing
+                    loss::Vector{Float64};  freeze::VI3=VI0)::Nothing
   length.([input, loss]) == [b.Yᵢ, b.Yₒ] || error("Wrong # of inputs")
 
   # Compute weight changes
   internal_vals, internal_derivs = (x->vcat(x...)).(zip(nested_outputs...))
-  d_ow = internal_vals*loss'
-  d_w = internal_derivs * internal_vals'
   d_iw = input * internal_derivs'
+  d_w = internal_derivs * internal_vals'
+  d_ow = internal_vals*loss'
+
+  # Remove changes for fixed elements
+  d_iw[freeze[1]] .= 0
+  d_w[freeze[2]] .= 0
+  d_ow[freeze[3]] .= 0
 
   # Update weights
   boxstate.out_weights .+= d_ow
   boxstate.weights .+= d_w
   boxstate.in_weights .+= d_iw
-
-  # Reset frozen weights
-  w0, w1 = freeze
-  set_wires!(boxstate, 0., w0)
-  set_wires!(boxstate, 1., w1)
 
   # Add a *contribution* to inputs of children for their updates
   i_internal, l_internal = get_child_update_data(
@@ -255,23 +257,18 @@ end
 
 # MANIPULATING STATE
 ####################
-set_wires!(s::PrimState, val::Float64, init::VPI3; zero_::Bool=false) = nothing
-function set_wires!(s::BoxState, val::Float64, init::VPI3; zero_::Bool=false
+set_wires!(s::PrimState, val::Float64, init::VI3; zero_::Bool=false) = nothing
+function set_wires!(s::BoxState, val::Float64, init::VI3; zero_::Bool=false
                     )::Nothing
   if zero_
     s.in_weights *= 0
     s.weights *= 0
     s.out_weights *= 0
   end
-  for (i,j) in init[1]
-    s.in_weights[i,j] = val
-  end
-  for (i,j) in init[2]
-    s.weights[i,j] = val
-  end
-  for (i,j) in init[3]
-    s.out_weights[i,j] = val
-  end
+  s.in_weights[init[1]] .= val
+  s.weights[init[2]] .= val
+  s.out_weights[init[3]] .= val
+  return nothing
 end
 
 """
@@ -288,7 +285,7 @@ freeze - specify indices that should be fixed to 0 and indices fixed to 1
 function stream!(d::DILS, input::Vector{Float64}, output::Float64;
                  init_state::Union{Nothing,DILSState}=nothing,
                  α::Float64=1e-5, n::Int=5000, σ::Float64=0.2,
-                 verbose::Bool=true, freeze::MaybeVVPI32=nothing
+                 verbose::Bool=true, freeze::MaybeVVI32=nothing
                  )::Tuple{DILSState,Vector}
   s = isnothing(init_state) ? DILSState(d, σ) : init_state
   if !isnothing(freeze)
@@ -296,11 +293,15 @@ function stream!(d::DILS, input::Vector{Float64}, output::Float64;
       set_wires!(st, 0., f0)
       set_wires!(st, 1., f1)
     end
+    freeze_ = (z->(z[1],z[2],z[3])).((x->(y->vcat(y...)).(x)).(
+                   (y->zip(y...)).(freeze))) # merge freeze0 and freeze1 lists
+  else
+    freeze_ = nothing
   end
   err, res = 0, Float64[]
 
   for _ in 1:n
-    update_res= update(d, s, input, [err*α]; freeze=freeze)
+    update_res= update(d, s, input, [err*α]; freeze=freeze_)
     push!(res, update_res[1][1][1])
     err = output - res[end]
     if verbose

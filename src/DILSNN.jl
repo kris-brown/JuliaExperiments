@@ -34,7 +34,7 @@ end
 Given a NN wiring pattern, return indices that should be fixed at 0 and to 1
 for each Box.
 """
-function fixed_wires(s::DILSState)::Vector{VPI3_2}
+function fixed_wires(s::DILSState)::Vector{VI3_2}
 
   """
   Use the shapes of the weight matrices (and knowledge of how they were
@@ -43,11 +43,10 @@ function fixed_wires(s::DILSState)::Vector{VPI3_2}
   Construct matrices with either 0, 1, or 0.5 (for values that will be learned)
   and use `findall` to collect the respective indices.
   """
-  function fixed_wires(s::BoxState)::VPI3_2
+  function fixed_wires(s::BoxState)::VI3_2
   (n_input, in_cols), (wr, wc) = size.([s.in_weights, s.weights])
   n_nested = Int((in_cols-1)/n_input) # Number of neurons in previou layer
-  getI = is->(i -> Pair(i.I...)).(is) # unpack CartesianIndex to Pair{Int,Int}
-  getI12 = mat -> (x->getI(findall(==(x), mat))).([0,1])
+  getI12 = mat -> (x->findall(==(x), mat)).([0,1])
 
   in_matrix = ((n_nested == 0) ? ([0.5]')
               : (hcat(repeat(I(n_input), 1, n_nested), zeros(n_input,1))))
@@ -58,15 +57,16 @@ function fixed_wires(s::DILSState)::Vector{VPI3_2}
   return (i0, w0, o0) => (i1, w1, o1)
   end
 
-  fixed_wires(s::PrimState)::VPI3_2 = VPI0 => VPI0
+  fixed_wires(s::PrimState)::VI3_2 = VI0 => VI0
 
   return fixed_wires.(s.states)
 end
 
 function run_nn!(layers::Vector{Int}, input::Vector{Float64}, output::Float64;
-         α::Float64=1e-1, n::Int=5000, σ::Float64=0.2)::Tuple{DILSState,Vector}
+         α::Float64=1e-1, n::Int=5000, σ::Float64=0.2, verbose::Bool
+         )::Tuple{DILSState,Vector}
   d = nn(length(input), layers, Tanh)
   s = DILSState(d, 0.05)
   freeze = fixed_wires(s)
-  stream!(d, input, output; freeze=freeze, init_state=s, n=n, α=α, σ=σ)
+  stream!(d, input, output; freeze=freeze, init_state=s, n=n, α=α, σ=σ, verbose=verbose)
 end
