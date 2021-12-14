@@ -1,11 +1,10 @@
 # using AlgebraicDynamics.DWDDynam: DiscreteMachine
 
 using LinearAlgebra
-using Plots: plot, plotlyjs
+using Plots: plot
 using Random, Distributions
 using LightGraphs
 Random.seed!(123) # Setting the seed
-# plotlyjs()
 
 # Type abbreviations/defaults
 #----------------------------
@@ -20,6 +19,7 @@ VPI00 = VPI0 => VPI0
 
 # General helper functions
 #-------------------------
+"""Topologically sort based on a list of children for each box"""
 function topsort(conn::Vector{Vector{Int}})
   g = DiGraph(length(conn))
   for (k, vs) in enumerate(conn)
@@ -36,6 +36,11 @@ end
 
 # Interfaces
 #-----------
+"""
+Something that will eventually be a dynamical system.
+
+Either a box or primitive
+"""
 abstract type DS end
 
 """
@@ -56,12 +61,16 @@ struct Box <: DS
   X::Vector{Pair{Int,Int}}  # Nested structure
 end
 
-
 isPrim(ds::Primitive) = true
 isPrim(ds::Box) = false
 
 """
-Indices to turn a flat vector into a list of vectors to feed to inner boxes
+Indices to turn a flat vector into a list of vectors to feed to inner boxes,
+for both the value input as well as the loss input.
+
+E.g. if there are three internal boxes: 1/1 0/1 1/2 (inputs/outputs)
+     then this should return [1:1=>1:1, ∅=>2:2, 2:2=>3:4]
+                              (Box 1)  (Box 2)  (Box 3)
 """
 function input_loss_inds(b::Box)::Vector{Pair{UnitRange, UnitRange}}
   res, curr_in, curr_loss = Pair{UnitRange, UnitRange}[], 1, 1
@@ -74,7 +83,10 @@ function input_loss_inds(b::Box)::Vector{Pair{UnitRange, UnitRange}}
 end
 
 
-"""A nesting of boxes."""
+"""
+A list of boxes and their nesting pattern.
+Validates that it makes sense upon construction
+"""
 struct DILS
   boxes::Vector{DS}
   nesting::Vector{Vector{Int}} # list boxes that are nested inside of this
@@ -94,6 +106,14 @@ end
 #-------
 abstract type State end
 
+mutable struct PrimState <: State
+  readout::Vector{Float64}
+  condition::Vector{Float64}
+  function PrimState(p::Primitive)
+    return new(zeros(p.Yₒ), zeros(p.Yᵢ))
+  end
+end
+
 mutable struct BoxState <: State
   in_weights::Matrix{Float64}   # nᵢ × Σᵢₙₜₑᵣₙₐₗ nᵢ
   weights::Matrix{Float64}      # Σᵢₙₜₑᵣₙₐₗ nᵢ × Σᵢₙₜₑᵣₙₐₗ nₒ
@@ -102,14 +122,6 @@ mutable struct BoxState <: State
     Xi, Xo = sum.([first.(b.X),last.(b.X)])
     new([rand(Normal(0, σ), row, col) for (row, col) in
                [(b.Yᵢ, Xi), (Xi, Xo), (Xo, b.Yₒ)]]...)
-  end
-end
-
-mutable struct PrimState <: State
-  readout::Vector{Float64}
-  condition::Vector{Float64}
-  function PrimState(p::Primitive)
-    return new(zeros(p.Yₒ), zeros(p.Yᵢ))
   end
 end
 
@@ -183,14 +195,14 @@ function update(d::DILS, ds::DILSState,
 end
 
 """Update Primitive box by applying f and df"""
-function update_box(prim::Primitive, primstate::PrimState, r1::Readouts, r2::Readouts,
-                    input::Vector{Float64}, loss::Vector{Float64};
+function update_box(prim::Primitive, pstate::PrimState, r1::Readouts,
+                    r2::Readouts, input::Vector{Float64}, loss::Vector{Float64};
                     freeze::VPI3_2=VPI00)::Nothing
   nᵢnₒ = [prim.Yᵢ, prim.Yₒ]
   length.([input, loss]) == nᵢnₒ || error("Wrong # of inputs")
-  primstate.readout = prim.f(input)
-  primstate.condition = reshape(prim.df(input), nᵢnₒ...) * loss
-  length.([primstate.condition, primstate.readout]) == nᵢnₒ || error("Wrong # outputs")
+  pstate.readout = prim.f(input)
+  pstate.condition = reshape(prim.df(input), nᵢnₒ...) * loss # chain rule
+  length.([pstate.condition, pstate.readout]) == nᵢnₒ || error("Wrong # outputs")
   return nothing
 end
 
@@ -217,7 +229,7 @@ function update_box(b::Box, boxstate::BoxState, nested_outputs::Readouts,
   set_wires!(boxstate, 0., w0)
   set_wires!(boxstate, 1., w1)
 
-  # Add a *contribution* to all_inputs/all_loss
+  # Add a *contribution* to inputs of children for their updates
   i_internal, l_internal = get_child_update_data(
     boxstate, input, loss, internal_vals, internal_derivs)
   for ((i_inds, l_inds), (i_in, l_in)) in zip(input_loss_inds(b), nested_inputs)

@@ -2,7 +2,12 @@ include("DILS.jl")
 
 """
 Construct a fully connected neural network. A final layer with 1 neuron will
-be added
+be added.
+
+There is one Const(1) box that is shared by all other Boxes. Each Box has its
+own copy of the activation function.
+
+TODO there is an activation before the final result, which should be removed.
 """
 function nn(nᵢ::Int, layers::Vector{Int}, act::Primitive)::DILS
   bs, conn = DS[], Vector{Int}[]
@@ -27,6 +32,7 @@ end
 
 """
 Given a NN wiring pattern, return indices that should be fixed at 0 and to 1
+for each Box.
 """
 function fixed_wires(s::DILSState)::Vector{VPI3_2}
 
@@ -57,9 +63,6 @@ function fixed_wires(s::DILSState)::Vector{VPI3_2}
   return fixed_wires.(s.states)
 end
 
-"""
-
-"""
 function run_nn!(layers::Vector{Int}, input::Vector{Float64}, output::Float64;
          α::Float64=1e-1, n::Int=5000, σ::Float64=0.2)::Tuple{DILSState,Vector}
   d = nn(length(input), layers, Tanh)
