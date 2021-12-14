@@ -1,0 +1,9 @@
+name = "JuliaExperiments"
+uuid = "e815dfdf-dfef-4750-b0d3-8d3712643c1e"
+authors = ["Kris <ksb@stanford.edu>"]
+version = "0.1.0"
+
+[deps]
+AlgebraicDynamics = "5fd6ff03-a254-427e-8840-ba658f502e32"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+PlotlyJS = "f0f68f2c-4968-5e81-91da-67840de0976a"
