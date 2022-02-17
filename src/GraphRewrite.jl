@@ -1,4 +1,4 @@
-using Catlab, Catlab.Graphs
+using Catlab.Graphs
 using Catlab.CategoricalAlgebra
 using Catlab.Present
 using Plots
@@ -76,7 +76,7 @@ function repeat(n::Int)
 
 end
 
-mesh = repeat(3)
+#mesh = repeat(3)
 
 # Define replacement
 
@@ -112,13 +112,13 @@ R = homomorphism(quad_int, quad_repl; initial=Dict([:V=>[1,2,3,4]]))
 L = homomorphism(quad_int, quad; initial=Dict([:V=>[1,2,3,4]]))
 
 
-@time(rewrite(L,R,mesh)) # .002
+#@time(rewrite(L,R,mesh)) # .002
 # Define functor into typed graph
 
 quad_tg = elements(quad)
 quad_repl_tg = elements(quad_repl)
 quad_int_tg = elements(quad_int)
-mesh_tg = elements(mesh)
+#mesh_tg = elements(mesh)
 
 
 
@@ -130,4 +130,17 @@ mesh_tg = elements(mesh)
 
 # Run rewrites of increasing size for each
 
+times = Float64[]
+for i in 2:30
+  mesh = @timed(repeat(i))
+  G = mesh[1]
+  con_time = mesh[2]
+  println("$i x $i mesh construction: $con_time seconds")
+  #m_index = rand(Int, i) # Can use this if we don't always want to match the first thing
+  push!(times, @timed(rewrite(L,R,G#=,m_index=m_index=#))[2])
+  re_time = times[end]
+  println("$i x $i mesh rewrite: $re_time seconds\n")
+end
+
 # Plot
+plot(times)
