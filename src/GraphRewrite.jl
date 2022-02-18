@@ -107,40 +107,45 @@ end
 
 
 
+# function elements(f::ACSetTransformation{S}) where S
+#   X, Y = elements.([dom(f), codom(f)])
+#   offY = Dict([o=>let z=findfirst(==(i), Y[:πₑ]); isnothing(z) ? 0 : z-1 end
+#           for (i,o) in enumerate(ob(S))])
+#   pts = vcat([collect(f[o]).+offY[o] for o in ob(S)]...)
+#   hs = homomorphisms(X, Y; initial=Dict([:El=>pts]))
+#   return only(hs)
+# end
+
 # Define rewrite rule
 R = homomorphism(quad_int, quad_repl; initial=Dict([:V=>[1,2,3,4]]))
 L = homomorphism(quad_int, quad; initial=Dict([:V=>[1,2,3,4]]))
-
-
-#@time(rewrite(L,R,mesh)) # .002
-# Define functor into typed graph
-
-quad_tg = elements(quad)
-quad_repl_tg = elements(quad_repl)
-quad_int_tg = elements(quad_int)
-#mesh_tg = elements(mesh)
-
-
-
-# Define rewrite of semisimplicial sets
-
-
-
-# Define rewrite of typed graphs
+gR, gL = elements.([R,L])
 
 # Run rewrites of increasing size for each
 
-times = Float64[]
-for i in 2:30
-  mesh = @timed(repeat(i))
-  G = mesh[1]
-  con_time = mesh[2]
-  println("$i x $i mesh construction: $con_time seconds")
-  #m_index = rand(Int, i) # Can use this if we don't always want to match the first thing
-  push!(times, @timed(rewrite(L,R,G#=,m_index=m_index=#))[2])
-  re_time = times[end]
-  println("$i x $i mesh rewrite: $re_time seconds\n")
+times, Gtimes = Vector{Float64}[], Vector{Float64}[]
+sizes = vcat(2,2:20)
+reps = 5
+for i in sizes
+  push!(times, Float64[]);push!(Gtimes, Float64[]);
+  for _ in 1:reps
+    G, contime = @timed(repeat(i))
+    #println("$(i)x$i mesh construction: $(contime) seconds")
+    #m_index = rand(Int, i) # Can use this if we want to control the match
+    m = homomorphism(codom(L), G)
+    push!(times[end], @timed(rewrite_match(L,R,m))[2])
+    println("$(i)x$i mesh rewrite: $(times[end][end]) seconds\n")
+    gG = elements(G)
+    gm = homomorphism(codom(gL), gG)
+    push!(Gtimes[end], @timed(rewrite_match(gL,gR,gm))[2])
+    println("$(i)x$i graph mesh rewrite: $(Gtimes[end][end]) seconds\n")
+  end
 end
 
+# drop smallest one due to compilation
+pTimes, pGtimes = [[sum(v[2:end])/reps for v in vs ]
+                        for vs in [times, Gtimes]]
 # Plot
-plot(times)
+plt(lst) = z->lst[Int(z)-1]  # because the x axis should start at 2, not 1
+plot(plt(pTimes),sizes, label="C-set", ylabel="Time (s)", xlabel="Grid size")
+plot!(plt(pGtimes), sizes,label="Typed graph")
